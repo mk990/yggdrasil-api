@@ -36,23 +36,25 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # Build the zip outside the checkout so it can never include itself. Layout is
-      # <name>-<version>/<name>/... — a top-level wrapping folder (matching GitHub's own
-      # "Download ZIP" convention) with the actual plugin files nested one level further under a
-      # folder named after the plugin itself, which is what the panel's importer expects.
+      # Build the zip outside the checkout so it can never include itself. The panel's importer
+      # extracts the zip's top-level folder as-is directly into plugins/, with no stripping of
+      # wrapper folders — so that top-level folder must be named exactly <name> (no version
+      # suffix), containing the files directly, so every install lands at plugins/<name>/ and
+      # every future release overwrites the same path instead of piling up version-named folders.
+      # The zip *file* itself is still named <name>-<version>.zip so releases stay distinguishable.
       - name: Build plugin zip
         run: |
-          folder="${{ steps.plugin.outputs.name }}-${{ steps.version.outputs.version }}"
           name="${{ steps.plugin.outputs.name }}"
-          mkdir -p "/tmp/build/$folder/$name" /tmp/dist
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p "/tmp/build/$name" /tmp/dist
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.claude' \
             --exclude='.gitignore' \
             --exclude='tmp' \
-            ./ "/tmp/build/$folder/$name/"
-          (cd /tmp/build && zip -r "/tmp/dist/$folder.zip" "$folder")
+            ./ "/tmp/build/$name/"
+          (cd /tmp/build && zip -r "/tmp/dist/$name-$version.zip" "$name")
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
