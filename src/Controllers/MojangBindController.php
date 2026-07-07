@@ -43,41 +43,42 @@ class MojangBindController extends Controller
 
         if (! preg_match('/^[a-zA-Z0-9_]{1,16}$/', $mojangName)) {
             return redirect(url('yggdrasil/mojang/bind'))
-                ->with('error', '请输入有效的 Minecraft 用户名（1-16位字母、数字或下划线）。');
+                ->with('error', trans('Yggdrasil::bind.error.invalid_name'));
         }
 
         $uid = auth()->user()->uid;
 
         if (! Player::where('uid', $uid)->exists()) {
             return redirect(url('yggdrasil/mojang/bind'))
-                ->with('error', '请先在角色管理页面创建一个角色，再进行正版账号绑定。');
+                ->with('error', trans('Yggdrasil::bind.error.no_player'));
         }
 
         if (Schema::hasTable('mojang_verifications') &&
             DB::table('mojang_verifications')->where('user_id', $uid)->exists()) {
             return redirect(url('yggdrasil/mojang/bind'))
-                ->with('error', '您已绑定正版账号，如需更换请先解除绑定。');
+                ->with('error', trans('Yggdrasil::bind.error.already_bound'));
         }
 
-        // 向 Mojang 查询规范用户名与 UUID：既校验账号是否真实存在，也消除大小写歧义
+        // Query Mojang for the canonical username and UUID: this both confirms the account really
+        // exists and resolves any case-sensitivity ambiguity.
         $resolved = $this->resolveMojangProfile($mojangName);
 
         if (! $resolved) {
             return redirect(url('yggdrasil/mojang/bind'))
-                ->with('error', "未能在 Mojang 找到正版账号「{$mojangName}」，请检查拼写后重试。");
+                ->with('error', trans('Yggdrasil::bind.error.mojang_not_found', ['name' => $mojangName]));
         }
 
-        // 该正版账号是否已被其他用户绑定
+        // Check whether this premium account is already bound by another user
         if (Schema::hasTable('mojang_verifications') &&
             DB::table('mojang_verifications')
                 ->where('mojang_uuid', $resolved['uuid'])
                 ->where('user_id', '!=', $uid)
                 ->exists()) {
             return redirect(url('yggdrasil/mojang/bind'))
-                ->with('error', '该正版账号已被其他用户绑定。');
+                ->with('error', trans('Yggdrasil::bind.error.mojang_taken'));
         }
 
-        // 清理所有已过期的申请记录
+        // Clean up any expired bind requests
         DB::table('pending_mojang_bind')
             ->where('created_at', '<', now()->subMinutes(15))
             ->delete();
@@ -90,12 +91,12 @@ class MojangBindController extends Controller
         DB::table('pending_mojang_bind')->updateOrInsert(['user_id' => $uid], $values);
 
         return redirect(url('yggdrasil/mojang/bind'))
-            ->with('success', "已确认正版账号「{$resolved['name']}」。请在 15 分钟内用该正版账号加入服务器，检测到后将自动完成绑定。");
+            ->with('success', trans('Yggdrasil::bind.success.request_submitted', ['name' => $resolved['name']]));
     }
 
     /**
-     * 向 Mojang 查询正版账号的规范用户名与 UUID。
-     * 找不到（账号不存在）或网络异常时返回 null。
+     * Query Mojang for the canonical username and UUID of a premium account.
+     * Returns null if the account isn't found or a network error occurs.
      */
     protected function resolveMojangProfile(string $name): ?array
     {
@@ -126,7 +127,7 @@ class MojangBindController extends Controller
             ->delete();
 
         return redirect(url('yggdrasil/mojang/bind'))
-            ->with('success', '已取消绑定申请。');
+            ->with('success', trans('Yggdrasil::bind.success.cancelled'));
     }
 
     public function unbind()
@@ -136,6 +137,6 @@ class MojangBindController extends Controller
             ->delete();
 
         return redirect(url('yggdrasil/mojang/bind'))
-            ->with('success', '已解除正版账号绑定。');
+            ->with('success', trans('Yggdrasil::bind.success.unbound'));
     }
 }

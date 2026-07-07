@@ -9,12 +9,13 @@ use Illuminate\Support\Facades\Log;
 use Yggdrasil\Exceptions\ForbiddenOperationException;
 
 /**
- * 校验 MUA 联盟中央服务器到本站受信回调（api/union/member/*）的签名请求。
+ * Verifies signed requests on trusted callbacks (api/union/member/*) from the MUA union's
+ * central server into this site.
  *
- * 中央服务器在每次回调时附带 X-Message-Signature/Timestamp/Nonce 三个头：
+ * The central server attaches three headers on every callback, X-Message-Signature/Timestamp/Nonce:
  *   - signature = base64( SHA256withRSA(body + timestamp + nonce) )
- *   - 验签公钥从 GET {union_api_root} 的 union_host_signature_public_key 字段拉取
- *   - timestamp 容忍 -10s ~ +30s，nonce 60s 内不可重放
+ *   - the verification public key is fetched from the union_host_signature_public_key field of GET {union_api_root}
+ *   - timestamp is tolerated within -10s ~ +30s; a nonce cannot be replayed within 60s
  */
 class UnionHostVerify
 {
@@ -30,19 +31,19 @@ class UnionHostVerify
             throw new ForbiddenOperationException('Union host verification failure.');
         }
 
-        // 防重放：同一 nonce 60s 内只接受一次
+        // Anti-replay: the same nonce is only accepted once within 60s
         if (Cache::has('union_host_signature_'.$nonce)) {
             Log::channel('ygg')->info('Union host verification failure: Invalid nonce.');
             throw new ForbiddenOperationException('Union host verification failure.');
         }
 
-        // 时间戳偏差校验
+        // Timestamp skew check
         if ($timestamp < time() - 10 || $timestamp > time() + 30) {
             Log::channel('ygg')->info('Union host verification failure: Invalid timestamp.');
             throw new ForbiddenOperationException('Union host verification failure.');
         }
 
-        // 拉取联盟公钥（连接失败等同验签失败）
+        // Fetch the union's public key (a connection failure is treated as a verification failure)
         try {
             $publicKey = Http::timeout(5.0)->get(option('union_api_root'))->json('union_host_signature_public_key');
         } catch (\Exception $e) {

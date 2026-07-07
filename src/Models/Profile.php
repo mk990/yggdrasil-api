@@ -31,7 +31,7 @@ class Profile
 
     public function serialize($unsigned = null)
     {
-        // 如果没显示指定 `unsigned` 参数就从 URL 中推断
+        // Infer from the URL if the `unsigned` parameter isn't explicitly specified
         if (is_null($unsigned)) {
             $unsigned = is_null(request('unsigned')) || request('unsigned') === 'true';
         }
@@ -44,7 +44,7 @@ class Profile
             'textures' => [],
         ];
 
-        // 检查 RSA 私钥
+        // Check the RSA private key
         if ($unsigned === false) {
             $key = openssl_pkey_get_private(option('ygg_private_key'));
 
@@ -57,7 +57,7 @@ class Profile
             $textures['signatureRequired'] = true;
         }
 
-        // 避免 BungeeCord 服务器上可能出现无法加载材质的 Bug
+        // Avoid a bug that can prevent textures from loading on BungeeCord servers
         app('url')->forceRootUrl(option('site_url'));
 
         $hasMojangBinding = Schema::hasTable('mojang_verifications') &&
@@ -72,7 +72,7 @@ class Profile
                 $textures['textures']['SKIN']['metadata'] = ['model' => 'slim'];
             }
         } elseif ($hasMojangBinding) {
-            // 该角色未设置皮肤，从绑定的 Mojang 账号获取。
+            // This character has no skin set, fetch it from the bound Mojang account instead.
             $skin = $this->fetchProfileFromMojang('SKIN');
             if ($skin) {
                 $textures['textures']['SKIN'] = $skin;
@@ -84,7 +84,7 @@ class Profile
                 'url' => url("textures/{$this->cape}")
             ];
         } elseif ($hasMojangBinding) {
-            // 该角色未设置披风，从绑定的 Mojang 账号获取。
+            // This character has no cape set, fetch it from the bound Mojang account instead.
             $cape = $this->fetchProfileFromMojang('CAPE');
             if ($cape) {
                 $textures['textures']['CAPE'] = $cape;
@@ -105,7 +105,7 @@ class Profile
         ];
 
         if ($unsigned === false) {
-            // 给每个 properties 签名
+            // Sign each property
             foreach ($result['properties'] as &$prop) {
                 $signature = $this->sign($prop['value'], $key);
 
@@ -129,7 +129,7 @@ class Profile
         $result = DB::table('uuid')->where('name', $name)->first();
 
         if (! $result) {
-            // 分配新的 UUID
+            // Allocate a new UUID
             $result = UUID::generateMinecraftUuid($name)->clearDashes();
             DB::table('uuid')->insert(['name' => $name, 'uuid' => $result]);
 

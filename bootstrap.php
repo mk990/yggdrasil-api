@@ -25,42 +25,42 @@ return function (Filter $filter, Dispatcher $events) {
         ]]);
     }
 
-    // 从旧版升级上来的默认继续使用旧的 UUID 生成算法
+    // Sites upgraded from an older version keep using the old UUID generation algorithm by default
     if (DB::table('uuid')->count() > 0 && !Option::get('ygg_uuid_algorithm')) {
         Option::set('ygg_uuid_algorithm', 'v4');
     }
 
-    // 初次使用自动生成私钥
+    // Auto-generate a private key on first use
     if (option('ygg_private_key') == '') {
         option(['ygg_private_key' => ygg_generate_rsa_keys()['private']]);
     }
 
-    // 记录访问详情
+    // Log request/response details
     if (request()->is('api/yggdrasil/*')) {
         ygg_log_http_request_and_response();
     }
 
-    // 保证用户修改角色名后 UUID 一致
+    // Keep the UUID consistent after a user renames their character
     $callback = function ($model) {
         $new = $model->getAttribute('name');
         $original = $model->getOriginal('name');
 
         if (!$original || $original === $new) return;
 
-        // 要是能执行到这里就说明新的角色名已经没人在用了
-        // 所以残留着的 UUID 映射删掉也没问题
+        // If we got here, the new name is no longer used by anyone else,
+        // so it's safe to delete any leftover UUID mapping for it.
         DB::table('uuid')->where('name', $new)->delete();
         DB::table('uuid')->where('name', $original)->update(['name' => $new]);
     };
 
-    // 仅当 UUID 生成算法为「随机生成」时保证修改角色名后 UUID 一致
-    // 因为另一种 UUID 生成算法要最大限度兼容盗版模式，所以不做修改
+    // Only keep the UUID consistent after a rename when the "randomly generated" algorithm is in use,
+    // since the other algorithm is meant to stay maximally compatible with offline mode, so it's left alone.
     if (option('ygg_uuid_algorithm') == 'v4') {
         App\Models\Player::updating($callback);
     }
 
-    // ===== MUA 联合认证：把角色变更同步给中央服务器 =====
-    // 仅当配置了 union_member_key 时才尝试同步，避免本地开发/未入盟环境无意义请求。
+    // ===== MUA union authentication: sync character changes to the central server =====
+    // Only attempt to sync when union_member_key is configured, to avoid pointless requests in local dev / non-member environments.
     $unionPush = function (string $method, string $url, array $payload = null) {
         if (option('union_member_key') === '') {
             return;
@@ -90,7 +90,8 @@ return function (Filter $filter, Dispatcher $events) {
 
     $events->listen(PlayerWillBeDeleted::class, function ($event) use ($unionPush) {
         $player = $event->player;
-        // 这里走 uuid 表直查，避免 getUuidFromName 在角色被删后命中空映射时再分配一个新 UUID
+        // Look up the uuid table directly here, to avoid getUuidFromName allocating a new UUID
+        // if it hits an empty mapping after the character has already been deleted.
         $row = DB::table('uuid')->where('name', $player->name)->first();
         if ($row) {
             $unionPush('delete', option('union_api_root').'/profile/'.$row->uuid);
@@ -98,11 +99,11 @@ return function (Filter $filter, Dispatcher $events) {
         }
     });
 
-    // 角色改名：分两种情况对齐到中央服务器。
-    //   - v4 算法：fork 的 updating 钩子已经把 (old_name, old_uuid) 原地改成 (new_name, old_uuid)，
-    //     UUID 不变，用 PUT /profile/{uuid} 改名即可。
-    //   - v3 算法：新名字会重新计算出一个新 UUID（name 的 namespaced hash），
-    //     旧 UUID 与新 UUID 不同，需要 DELETE 旧 + POST 新。
+    // Character rename: reconcile with the central server in two cases.
+    //   - v4 algorithm: the fork's `updating` hook has already rewritten (old_name, old_uuid) in place
+    //     to (new_name, old_uuid); the UUID doesn't change, so a PUT /profile/{uuid} rename suffices.
+    //   - v3 algorithm: the new name produces a freshly computed UUID (a namespaced hash of the name),
+    //     so the old and new UUIDs differ and we need a DELETE of the old one + POST of the new one.
     $events->listen('player.renamed', function ($player, $old) use ($unionPush) {
         if (! $old || $old->name === $player->name) {
             return;
@@ -112,14 +113,14 @@ return function (Filter $filter, Dispatcher $events) {
         $oldRow = DB::table('uuid')->where('name', $old->name)->first();
 
         if ($oldRow && $oldRow->uuid !== $newUuid) {
-            // v3 路径：旧 UUID 还在表里（updating 钩子未启用）
+            // v3 path: the old UUID is still in the table (the `updating` hook isn't enabled for this algorithm)
             $unionPush('delete', option('union_api_root').'/profile/'.$oldRow->uuid);
             $unionPush('post', option('union_api_root').'/profile', [
                 'id' => $newUuid,
                 'name' => $player->name,
             ]);
         } else {
-            // v4 路径：UUID 不变，只是改名
+            // v4 path: the UUID doesn't change, it's just a rename
             $unionPush('put', option('union_api_root').'/profile/'.$newUuid, [
                 'name' => $player->name,
             ]);
@@ -128,7 +129,7 @@ return function (Filter $filter, Dispatcher $events) {
         Log::channel('ygg')->info("Player renamed [{$old->name} -> {$player->name}]; union sync issued.");
     });
 
-    // 向用户中心首页添加「快速配置启动器」板块
+    // Add a "Quick Launcher Configuration" section to the user center home page
     if (option('ygg_show_config_section')) {
         $filter->add('grid:user.index', function ($grid) {
             $grid['widgets'][0][0][] = 'Yggdrasil::dnd';
@@ -138,21 +139,21 @@ return function (Filter $filter, Dispatcher $events) {
         Hook::addScriptFileToPage(plugin('yggdrasil-api')->assets('dnd.js'), ['user']);
     }
 
-    // 向管理后台菜单添加「Yggdrasil 日志」项目
+    // Add a "Yggdrasil Logs" item to the admin menu
     Hook::addMenuItem('admin', 4, [
         'title' => 'Yggdrasil::log.title',
         'link'  => 'admin/yggdrasil-log',
         'icon'  => 'fa-history'
     ]);
 
-    // 向用户中心菜单添加「绑定正版账号」项目
+    // Add a "Bind Premium Account" item to the user center menu
     Hook::addMenuItem('user', 4, [
         'title' => 'Yggdrasil::bind.menu_title',
         'link'  => 'yggdrasil/mojang/bind',
         'icon'  => 'fa-gamepad'
     ]);
 
-    // 添加 API 路由
+    // Register API routes
     Hook::addRoute(function () {
         Route::namespace('Yggdrasil\Controllers')
             ->prefix('api/yggdrasil')
@@ -162,7 +163,7 @@ return function (Filter $filter, Dispatcher $events) {
                 require __DIR__.'/routes.php';
             });
 
-        // ===== MUA 联合认证：受信入站回调（中央服务器带签名访问） =====
+        // ===== MUA union authentication: trusted inbound callbacks (accessed with a signature by the central server) =====
         Route::namespace('Yggdrasil\Controllers')->group(function () {
             Route::middleware(['Yggdrasil\Middleware\UnionHostVerify'])
                 ->prefix('api/union/member')
@@ -175,7 +176,7 @@ return function (Filter $filter, Dispatcher $events) {
                     Route::post('diagnose',         'UnionController@diagnose');
                 });
 
-            // 联盟 hello（无需签名，供中央服务器轮询版本号）
+            // Union hello (no signature required; lets the central server poll version numbers)
             Route::get('api/union/member', 'UnionController@hello');
         });
 
@@ -190,7 +191,7 @@ return function (Filter $filter, Dispatcher $events) {
                     'ConfigController@generate'
                 );
 
-                // 管理员手动触发联盟同步
+                // Admin manually triggers union sync
                 Route::prefix('union')->group(function () {
                     Route::post('member/updatelist',       'UnionController@updateList');
                     Route::post('member/updateprivatekey', 'UnionController@updatePrivateKey');
@@ -199,7 +200,7 @@ return function (Filter $filter, Dispatcher $events) {
                 });
             });
 
-        // 正版绑定页面（普通用户可访问）
+        // Premium account binding page (accessible to regular users)
         Route::middleware(['web', 'auth'])
             ->namespace('Yggdrasil\Controllers')
             ->prefix('yggdrasil/mojang')
@@ -211,7 +212,7 @@ return function (Filter $filter, Dispatcher $events) {
             });
     });
 
-    // 全局添加 ALI HTTP 响应头
+    // Globally add the ALI HTTP response header
     if (option('ygg_enable_ali')) {
         $kernel = app()->make(Illuminate\Contracts\Http\Kernel::class);
         $kernel->pushMiddleware(Yggdrasil\Middleware\AddApiIndicationHeader::class);

@@ -28,7 +28,7 @@ class SessionController extends Controller
         $result = DB::table('uuid')->where('uuid', $selectedProfile)->first();
 
         if (! $result) {
-            // 据说 Mojang 在这种情况下是会返回 403 的
+            // Reportedly Mojang returns 403 in this case
             throw new ForbiddenOperationException(
                 trans('Yggdrasil::exceptions.uuid', ['profile' => $selectedProfile])
             );
@@ -37,7 +37,7 @@ class SessionController extends Controller
         $player = Player::where('name', $result->name)->first();
 
         if (! $player) {
-            // 删除已失效的 UUID 映射（e.g. 其对应的角色已被删除）
+            // Delete the now-stale UUID mapping (e.g. the corresponding character was deleted)
             DB::table('uuid')->where('uuid', $selectedProfile)->delete();
 
             throw new ForbiddenOperationException(
@@ -66,10 +66,10 @@ class SessionController extends Controller
                 throw new ForbiddenOperationException(trans('Yggdrasil::exceptions.user.banned'));
             }
 
-            // 加入服务器，缓存 120 秒（与 hasJoinedServer 一侧对应）
+            // Joined the server; cache for 120 seconds (matches the hasJoinedServer side)
             Cache::put("SERVER_$serverId", ['profile' => $selectedProfile, 'ip' => $request->ip()], 120);
         } else {
-            // 指定角色所属的用户没有签发任何令牌
+            // The user owning the specified character hasn't issued any token
             throw new ForbiddenOperationException(trans('Yggdrasil::exceptions.token.missing'));
         }
 
@@ -93,7 +93,7 @@ class SessionController extends Controller
 
         Log::channel('ygg')->info("Checking if player [$name] has joined the server [$serverId] with IP [$ip]");
 
-        // 检查是否进行过外置登录的 join 请求
+        // Check whether an external-login join request was made
         if ($session = Cache::get("SERVER_$serverId")) {
             $cachedProfile = is_array($session) ? ($session['profile'] ?? null) : $session;
             $cachedIp     = is_array($session) ? ($session['ip'] ?? null) : null;
@@ -101,7 +101,7 @@ class SessionController extends Controller
             $profile = $cachedProfile ? Profile::createFromUuid($cachedProfile) : null;
 
             if ($profile && $name === $profile->name) {
-                // IP 校验：双方都有 IP 时才比对，任一方没有则跳过
+                // IP check: only compare when both sides have an IP, skip if either is missing
                 if ($ip && $cachedIp && $ip !== $cachedIp) {
                     Log::channel('ygg')->warning("Player [$name] IP mismatch: expected [$cachedIp], got [$ip]");
                     return response('')->setStatusCode(204);
@@ -124,7 +124,7 @@ class SessionController extends Controller
             }
         }
 
-        // 外置缓存未命中，尝试向 Mojang 转发验证（正版账号回落）
+        // No local cache hit; try forwarding verification to Mojang (premium account fallback)
         if (Schema::hasTable('mojang_verifications')) {
             $profile = $this->hasJoinedMojang($name, $serverId);
             if ($profile) {
@@ -143,16 +143,19 @@ class SessionController extends Controller
             }
         }
 
-        // Mojang 也没命中：转发给 MUA 中央站，让它去 fan-out 联盟成员站。
-        // 中央站签出的 profile 用联盟共享私钥签名，本站公钥能校验通过。
+        // Mojang didn't hit either: forward to the MUA central server so it can fan out to union member sites.
+        // Profiles signed out by the central server use the union's shared private key, so our public key can verify them.
         if (option('union_member_key') !== '') {
             Log::channel('ygg')->info("Forwarding hasJoined for player [$name] to MUA union upstream.");
             $forwarded = $this->hasJoinedUnion($name, $serverId, $ip);
             if ($forwarded !== null) {
-                // 撞名处理：MUA 中央站的 hasJoined 不会改写返回体的 name，所以联盟里有重名时
-                // 本地玩家 + 跨站玩家会以同名进同一台 proxy，触发 "you already connected to the proxy"。
-                // 跟 MUA 主站当 authlib 时一致的做法是：在 hasJoined 响应里给跨站玩家加 _MUA 后缀，
-                // 同时把 properties[].value 里嵌的 profileName 一并改写并用本站（=联盟共享）私钥重签。
+                // Name-collision handling: the MUA central server's hasJoined doesn't rewrite the response's
+                // `name`, so when there's a duplicate name within the union, a local player and a cross-site
+                // player would join the same proxy under the same name, triggering "you already connected to
+                // the proxy". Following the same approach the MUA main site uses as authlib: append a `_MUA`
+                // suffix to the cross-site player's name in the hasJoined response, and correspondingly rewrite
+                // the embedded `profileName` in `properties[].value` and re-sign it with this site's (= the
+                // union's shared) private key.
                 $forwardedUuid = strtolower(str_replace('-', '', $forwarded['id'] ?? ''));
                 $forwardedName = $forwarded['name'] ?? '';
                 $localCollision = DB::table('uuid')
@@ -179,8 +182,9 @@ class SessionController extends Controller
     }
 
     /**
-     * 把 hasJoined 透传给 MUA 中央站。返回原样的 JSON 数组（含 properties[].signature），
-     * 或在中央站 204 / 5xx / 异常时返回 null 让上层走默认 204。
+     * Passes hasJoined through to the MUA central server. Returns the JSON array as-is
+     * (including properties[].signature), or null if the central server returns 204/5xx
+     * or an exception occurs, so the caller falls back to the default 204.
      */
     protected function hasJoinedUnion(string $name, string $serverId, ?string $ip): ?array
     {
@@ -189,8 +193,8 @@ class SessionController extends Controller
             return null;
         }
 
-        // union_api_root 形如 https://skin.mualliance.ltd/api/union，
-        // 联盟中央站本身也是个 yggdrasil 实现，hasJoined 在 /api/yggdrasil 下。
+        // union_api_root looks like https://skin.mualliance.ltd/api/union; the union's central
+        // server is itself a yggdrasil implementation, with hasJoined under /api/yggdrasil.
         $base = preg_replace('#/api/union/?$#', '', rtrim($apiRoot, '/'));
         $url  = $base.'/api/yggdrasil/sessionserver/session/minecraft/hasJoined';
 
@@ -244,14 +248,14 @@ class SessionController extends Controller
                 ->first();
 
             if (! $binding) {
-                // 检查是否有等待中的绑定申请，有则自动完成绑定
+                // Check whether there's a pending bind request, and auto-complete the binding if so
                 if (Schema::hasTable('pending_mojang_bind')) {
                     $query = DB::table('pending_mojang_bind')
                         ->where('created_at', '>=', now()->subMinutes(15));
 
                     if (Schema::hasColumn('pending_mojang_bind', 'mojang_uuid')) {
-                        // 优先按 UUID 匹配：不受大小写、改名影响。
-                        // 旧的、没有 UUID 的申请记录则回退到按名字（忽略大小写）匹配。
+                        // Prefer matching by UUID: unaffected by case or renames.
+                        // Older bind requests without a UUID fall back to matching by name (case-insensitive).
                         $query->where(function ($q) use ($mojangUuid, $name) {
                             $q->where('mojang_uuid', $mojangUuid)
                                 ->orWhere(function ($q2) use ($name) {
@@ -313,14 +317,15 @@ class SessionController extends Controller
     }
 
     /**
-     * 在 forwarded profile 上把 name 改成 $newName，并对 properties[].value 重签。
+     * Renames a forwarded profile to $newName and re-signs properties[].value.
      *
-     * 改写点：
-     *   - top-level `name`
-     *   - `properties[].value`（base64 解开后里面的 JSON 也有个 `profileName` 字段，需要同步）
-     *   - `properties[].signature`（用本站 = 联盟共享私钥重签）
+     * What gets rewritten:
+     *   - the top-level `name`
+     *   - `properties[].value` (after base64-decoding, the embedded JSON also has a `profileName`
+     *     field that needs to be kept in sync)
+     *   - `properties[].signature` (re-signed with this site's = the union's shared private key)
      *
-     * 联盟所有成员校验签名都是同一把公钥，签得通过。
+     * Every member of the union verifies signatures against the same public key, so it will validate.
      */
     protected function renameAndResign(array $profile, string $newName): array
     {
@@ -329,7 +334,8 @@ class SessionController extends Controller
         $key = openssl_pkey_get_private(option('ygg_private_key'));
         if (! $key) {
             Log::channel('ygg')->warning('Cannot resign forwarded profile: private key invalid; returning unsigned rename.');
-            // 没签名 launcher 通常也就进不了服 —— 这种情况下我们救不了，但起码改名是改了。
+            // A launcher usually can't join without a valid signature anyway — we can't rescue this case,
+            // but at least the rename itself has been applied.
             foreach ($profile['properties'] ?? [] as &$prop) {
                 if (($prop['name'] ?? '') === 'textures') {
                     $decoded = json_decode(base64_decode($prop['value']), true);
@@ -364,13 +370,13 @@ class SessionController extends Controller
     }
 
     /**
-     * 撞名时给跨站 profile 起一个本地不冲突的新名字。
+     * Picks a locally non-conflicting new name for a cross-site profile when there's a name collision.
      *
-     * 后缀来源：向 MUA 中央站查 `/profile/unmapped/byuuid/{uuid}`，
-     * 取 `backend_scopes.self` 作为该 profile 所属皮肤站的简称（如 MUA / SJMC / PKUMC）。
+     * Suffix source: queries the MUA central server's `/profile/unmapped/byuuid/{uuid}` and takes
+     * `backend_scopes.self` as the short code of the skin site the profile belongs to (e.g. MUA / SJMC / PKUMC).
      *
-     * 如果中央站查询失败或拿不到代码，回落到 `_UNION` 后缀。
-     * 加完后缀仍撞，则继续追加 `2`、`3` ……直到不撞。
+     * Falls back to a `_UNION` suffix if the central-server lookup fails or no code is returned.
+     * If the suffixed name still collides, keeps appending `2`, `3`, ... until it doesn't.
      */
     protected function resolveCollisionName(string $original, string $uuid): string
     {
@@ -385,8 +391,8 @@ class SessionController extends Controller
     }
 
     /**
-     * 向 MUA 中央站查 profile 的归属站点代码（如 "MUA" / "SJMC" / "PKUMC"）。
-     * 失败返回 null，由调用方回落到默认后缀。
+     * Queries the MUA central server for the site code a profile belongs to (e.g. "MUA" / "SJMC" / "PKUMC").
+     * Returns null on failure, letting the caller fall back to the default suffix.
      */
     protected function fetchUnionBackendCode(string $uuid): ?string
     {
@@ -416,7 +422,7 @@ class SessionController extends Controller
             return null;
         }
 
-        // 端点返回数组，期望首项匹配；拿 backend_scopes.self
+        // The endpoint returns an array; we expect the first item to match, and take backend_scopes.self
         $code = $data[0]['backend_scopes']['self'] ?? null;
         if (! is_string($code) || $code === '') {
             return null;

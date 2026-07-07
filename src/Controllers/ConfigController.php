@@ -112,7 +112,7 @@ class ConfigController extends Controller
                 'implementationVersion' => plugin('yggdrasil-api')->version,
                 'serverListVersion' => option('union_server_list_version'),
                 'privateKeyVersion' => option('union_private_key_version'),
-                // 暂未启用任何联盟扩展（blacklist / OAuth2），保持空数组
+                // No union extensions (blacklist / OAuth2) are enabled yet, keep this empty
                 'enabledFeatures' => [],
                 'links' => [
                     'homepage' => url('/')
