@@ -7,7 +7,7 @@ use Log;
 use App\Models\Player;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Http;
+use Yggdrasil\Utils\UnionClient;
 
 /**
  * MUA union authentication client — handles this site's pulls from the central server as well as
@@ -35,9 +35,7 @@ class UnionController extends Controller
     public function updateList()
     {
         try {
-            $response = Http::timeout(5.0)
-                ->withHeaders(['X-Union-Member-Key' => option('union_member_key')])
-                ->get(option('union_api_root').'/serverlist');
+            $response = UnionClient::request('get', option('union_api_root').'/serverlist');
         } catch (\Exception $e) {
             return ['status' => 'error', 'message' => $e->getMessage()];
         }
@@ -66,9 +64,7 @@ class UnionController extends Controller
     public function updatePrivateKey()
     {
         try {
-            $response = Http::timeout(5.0)
-                ->withHeaders(['X-Union-Member-Key' => option('union_member_key')])
-                ->get(option('union_api_root').'/privatekey');
+            $response = UnionClient::request('get', option('union_api_root').'/privatekey');
         } catch (\Exception $e) {
             return ['status' => 'error', 'message' => $e->getMessage()];
         }
@@ -113,9 +109,7 @@ class UnionController extends Controller
         $profiles = $uuids->only($names->all())->flip();
 
         try {
-            $response = Http::timeout(15.0)
-                ->withHeaders(['X-Union-Member-Key' => option('union_member_key')])
-                ->post(option('union_api_root').'/sync', ['profileList' => $profiles]);
+            $response = UnionClient::request('post', option('union_api_root').'/sync', ['profileList' => $profiles], 15.0);
         } catch (\Exception $e) {
             return ['status' => 'error', 'message' => $e->getMessage()];
         }
@@ -166,9 +160,7 @@ class UnionController extends Controller
     public function triggerDiagnose()
     {
         try {
-            $response = Http::timeout(10.0)
-                ->withHeaders(['X-Union-Member-Key' => option('union_member_key')])
-                ->post(option('union_api_root').'/diagnose');
+            $response = UnionClient::request('post', option('union_api_root').'/diagnose', null, 10.0);
 
             if ($response->ok()) {
                 return ['status' => 'ok', 'data' => $response->json()];

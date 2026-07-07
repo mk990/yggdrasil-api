@@ -19,6 +19,9 @@ use Yggdrasil\Exceptions\ForbiddenOperationException;
  */
 class UnionHostVerify
 {
+    const PUBLIC_KEY_CACHE_KEY = 'union_host_signature_public_key';
+    const PUBLIC_KEY_CACHE_TTL = 300; // 5 minutes
+
     public function handle($request, Closure $next)
     {
         $signature = $request->header('X-Message-Signature');
@@ -43,26 +46,62 @@ class UnionHostVerify
             throw new ForbiddenOperationException('Union host verification failure.');
         }
 
-        // Fetch the union's public key (a connection failure is treated as a verification failure)
-        try {
-            $publicKey = Http::timeout(5.0)->get(option('union_api_root'))->json('union_host_signature_public_key');
-        } catch (\Exception $e) {
-            Log::channel('ygg')->info('Union host verification failure: Cannot fetch public key. '.$e->getMessage());
-            throw new ForbiddenOperationException('Union host verification failure.');
-        }
+        $payload = $body.$timestamp.$nonce;
+        $decodedSignature = base64_decode($signature);
 
+        $publicKey = $this->fetchPublicKey();
         if (! $publicKey) {
-            Log::channel('ygg')->info('Union host verification failure: Public key missing in upstream response.');
             throw new ForbiddenOperationException('Union host verification failure.');
         }
 
-        if (openssl_verify($body.$timestamp.$nonce, base64_decode($signature), $publicKey, OPENSSL_ALGO_SHA256) !== 1) {
-            Log::channel('ygg')->info('Union host verification failure: Invalid signature.');
-            throw new ForbiddenOperationException('Union host verification failure.');
+        if (openssl_verify($payload, $decodedSignature, $publicKey, OPENSSL_ALGO_SHA256) !== 1) {
+            // The cached key may be stale if the hub rotated its signing key since we last cached
+            // it. Refetch once and retry before giving up, so a legitimate rotation doesn't have
+            // to wait out the cache TTL.
+            $freshKey = $this->fetchPublicKey(true);
+            $verified = $freshKey && $freshKey !== $publicKey
+                && openssl_verify($payload, $decodedSignature, $freshKey, OPENSSL_ALGO_SHA256) === 1;
+
+            if (! $verified) {
+                Log::channel('ygg')->info('Union host verification failure: Invalid signature.');
+                throw new ForbiddenOperationException('Union host verification failure.');
+            }
         }
 
         Cache::put('union_host_signature_'.$nonce, $signature, 60);
 
         return $next($request);
+    }
+
+    /**
+     * Fetch the central server's host-callback signature public key, cached for
+     * self::PUBLIC_KEY_CACHE_TTL seconds so we don't round-trip to the hub on every request.
+     * Pass $forceRefresh to bypass the cache, e.g. after a signature verification failure that
+     * might be caused by the hub having rotated its key since we last cached it.
+     */
+    protected function fetchPublicKey(bool $forceRefresh = false): ?string
+    {
+        if (! $forceRefresh) {
+            $cached = Cache::get(self::PUBLIC_KEY_CACHE_KEY);
+            if ($cached) {
+                return $cached;
+            }
+        }
+
+        try {
+            $publicKey = Http::timeout(5.0)->get(option('union_api_root'))->json('union_host_signature_public_key');
+        } catch (\Exception $e) {
+            Log::channel('ygg')->info('Union host verification failure: Cannot fetch public key. '.$e->getMessage());
+            return null;
+        }
+
+        if (! $publicKey) {
+            Log::channel('ygg')->info('Union host verification failure: Public key missing in upstream response.');
+            return null;
+        }
+
+        Cache::put(self::PUBLIC_KEY_CACHE_KEY, $publicKey, self::PUBLIC_KEY_CACHE_TTL);
+
+        return $publicKey;
     }
 }
