@@ -36,21 +36,22 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # Build the zip outside the checkout so it can never include itself. Mirrors the layout of
-      # GitHub's own "Download ZIP" archive (a single wrapping top-level folder) since that's the
-      # structure Blessing Skin's plugin importer actually expects — a flat zip (files at the zip
-      # root) fails to import even though it contains the same files.
+      # Build the zip outside the checkout so it can never include itself. Layout is
+      # <name>-<version>/<name>/... — a top-level wrapping folder (matching GitHub's own
+      # "Download ZIP" convention) with the actual plugin files nested one level further under a
+      # folder named after the plugin itself, which is what the panel's importer expects.
       - name: Build plugin zip
         run: |
           folder="${{ steps.plugin.outputs.name }}-${{ steps.version.outputs.version }}"
-          mkdir -p "/tmp/build/$folder" /tmp/dist
+          name="${{ steps.plugin.outputs.name }}"
+          mkdir -p "/tmp/build/$folder/$name" /tmp/dist
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.claude' \
             --exclude='.gitignore' \
             --exclude='tmp' \
-            ./ "/tmp/build/$folder/"
+            ./ "/tmp/build/$folder/$name/"
           (cd /tmp/build && zip -r "/tmp/dist/$folder.zip" "$folder")
 
       - name: Upload build artifact
