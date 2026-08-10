@@ -58,17 +58,17 @@ if (! function_exists('ygg_log')) {
 
     function ygg_log($params)
     {
-        if (env('YGG_VERBOSE_LOG')) {
-            $data = array_merge([
-                'action' => 'undefined',
-                'user_id' => 0,
-                'player_id' => 0,
-                'parameters' => '[]',
-                'ip' => (new Whip())->getValidIpAddress(),
-                'time' => Carbon::now(),
-            ], $params);
+        // This feeds the admin log page and is always recorded; YGG_VERBOSE_LOG only
+        // controls the extra request/response dump written to storage/logs.
+        $data = array_merge([
+            'action' => 'undefined',
+            'user_id' => 0,
+            'player_id' => 0,
+            'parameters' => '[]',
+            'ip' => (new Whip())->getValidIpAddress(),
+            'time' => Carbon::now(),
+        ], $params);
 
-            return DB::table('ygg_log')->insert($data);
-        }
+        return DB::table('ygg_log')->insert($data);
     }
 }
