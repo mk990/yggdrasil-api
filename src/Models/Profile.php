@@ -37,7 +37,9 @@ class Profile
         }
 
         $textures = [
-            'timestamp' => round(microtime(true) * 1000),
+            // Must stay an integer: a "1770000000000.0" timestamp would shift every byte
+            // after it and break tools that slice the base64 payload positionally.
+            'timestamp' => (int) round(microtime(true) * 1000),
             'profileId' => UUID::format($this->uuid),
             'profileName' => $this->name,
             'isPublic' => true,
@@ -97,9 +99,7 @@ class Profile
             'properties' => [
                 [
                     'name' => 'textures',
-                    'value' => base64_encode(
-                        json_encode($textures, JSON_UNESCAPED_SLASHES | JSON_FORCE_OBJECT)
-                    ),
+                    'value' => base64_encode(ygg_encode_texture_payload($textures)),
                 ],
             ],
         ];

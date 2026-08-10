@@ -342,7 +342,7 @@ class SessionController extends Controller
                     $decoded = json_decode(base64_decode($prop['value']), true);
                     if (is_array($decoded)) {
                         $decoded['profileName'] = $newName;
-                        $prop['value'] = base64_encode(json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_FORCE_OBJECT));
+                        $prop['value'] = base64_encode(ygg_encode_texture_payload($decoded));
                     }
                 }
                 unset($prop['signature']);
@@ -356,7 +356,7 @@ class SessionController extends Controller
                 $decoded = json_decode(base64_decode($prop['value']), true);
                 if (is_array($decoded)) {
                     $decoded['profileName'] = $newName;
-                    $prop['value'] = base64_encode(json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_FORCE_OBJECT));
+                    $prop['value'] = base64_encode(ygg_encode_texture_payload($decoded));
                 }
             }
 

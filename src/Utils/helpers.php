@@ -39,6 +39,42 @@ if (! function_exists('ygg_generate_rsa_keys')) {
     }
 }
 
+if (! function_exists('ygg_encode_texture_payload')) {
+
+    /**
+     * Encode the `textures` property payload exactly the way Mojang's session server does:
+     * Gson pretty printing, two-space indent, " : " between key and value.
+     *
+     * A compact json_encode() is perfectly valid JSON, but a lot of third-party tooling
+     * (player-head mods in particular) never decodes the base64 at all — it slices the
+     * base64 string on a hardcoded token like `cHJvZmlsZUlk` ("profileId"). That token only
+     * appears when "profileId" starts on a three-byte boundary, which Mojang's formatting
+     * guarantees and compact JSON does not.
+     */
+    function ygg_encode_texture_payload($value, $depth = 0)
+    {
+        if (! is_array($value)) {
+            return json_encode($value, JSON_UNESCAPED_SLASHES);
+        }
+
+        if ($value === []) {
+            return '{}';
+        }
+
+        $indent = str_repeat('  ', $depth + 1);
+        $entries = [];
+
+        foreach ($value as $key => $item) {
+            $entries[] = $indent
+                .json_encode((string) $key, JSON_UNESCAPED_SLASHES)
+                .' : '
+                .ygg_encode_texture_payload($item, $depth + 1);
+        }
+
+        return "{\n".implode(",\n", $entries)."\n".str_repeat('  ', $depth).'}';
+    }
+}
+
 if (! function_exists('ygg_log_http_request_and_response')) {
 
     function ygg_log_http_request_and_response()
